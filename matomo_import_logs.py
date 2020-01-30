@@ -1023,7 +1023,6 @@ def parseApacheTime(date_string, format):
     return datetime.datetime(year, month, day, hour, minute, second)
 
 class Parser(object):
-    MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dez']
     """
     The Parser parses the lines in a specified file and inserts them into
     a Queue.
