@@ -23,7 +23,6 @@ if sys.version_info[0] != 2:
 
 import bz2
 import datetime
-import ciso8601
 import gzip
 import httplib
 import inspect
@@ -1021,8 +1020,7 @@ def parseApacheTime(date_string, format):
     hour = int(date_string[12:14])
     minute = int(date_string[15:17])
     second = int(date_string[18:20])
-    res = datetime.datetime(year, month, day, hour, minute, second)
-    return res
+    return datetime.datetime(year, month, day, hour, minute, second)
 
 class Parser(object):
     MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dez']
