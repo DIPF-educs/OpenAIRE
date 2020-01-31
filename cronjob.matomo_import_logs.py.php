@@ -121,8 +121,8 @@ foreach($logfiles as $logfile) {
                           "\n\nDies ist eine automatisch erstellte Mail. ".
                           "Bitte antworten Sie nicht direkt an den Absender dieser Mail.";
   if($OpenAire_logmail->send())
-    print("Protokoll versendet an ".$prog_mail."\n");
-  else print("Protokoll konnte nicht an ".$prog_mail." versendet werden.\n");
+    print("\nProtokoll versendet an ".$prog_mail."\n");
+  else print("\nProtokoll konnte nicht an ".$prog_mail." versendet werden.\n");
   unset($OpenAire_logmail);
   print("\n");
 }
