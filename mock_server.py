@@ -11,7 +11,12 @@ def dummy():
 def piwik():
     app.logger.info('Got: %d bytes' % request.content_length)
     if request.is_json:
-        #with open('server.json', 'a') as fp:
-        #    fp.write(json.dumps(request.json) + '\n')
+        with open('server.json', 'a') as fp:
+            fp.write(json.dumps(request.json) + '\n')
         pass
     return {'success': True}
+
+if __name__ == "__main__":
+    from gevent.pywsgi import WSGIServer
+    http_server = WSGIServer(('', 5000), app)
+    http_server.serve_forever()
