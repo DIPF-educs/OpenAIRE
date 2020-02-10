@@ -13,7 +13,6 @@ def piwik():
     if request.is_json:
         with open('server.json', 'a') as fp:
             fp.write(json.dumps(request.json) + '\n')
-        pass
     return {'success': True}
 
 if __name__ == "__main__":
