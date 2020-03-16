@@ -21,23 +21,33 @@ $conf = new configFile ("../pedocs.conf");
 $prog_mail = $conf->value("prog_mail");
 $opusmail   = $conf->value("opusmail");
 # Parse command line options
-$options=getopt('vl:');$verbose = 0;
+$options=getopt('vl:',array('skip:'));$verbose = 0;
 $logfiles = array();
 if(isset($options['v'])) $verbose = 1;
-if(isset($options['l']) && file_exists($options['l'])) $logfiles[] = $options['l'];
-$data_folder = $config['data_folder'];
-if(!$logfiles) {
-  if(file_exists($config['data_folder']."/logfiles_list.txt")) {
-    $logfile_list_handle = fopen($config['data_folder']."/logfiles_list.txt","r");
-    while(!feof($logfile_list_handle)) {
-      $entry = fgets($logfile_list_handle);
-      if(trim($entry)) $logfile_list[] = pathinfo(trim($entry),PATHINFO_BASENAME);
-    }
-    if($logfile_list_handle) fclose($logfile_list_handle);
+if(isset($options['l'])) {
+  if(file_exists($options['l'])) $logfiles[] = $options['l'];
+  else {
+    print("Die angegebene Datei ".$options['l']." konnte nicht gefunden werden.\n");
+    exit;
   }
-  if($verbose) print("Einlesen der bisherigen Logfile-List\n");
-  if(!$logfile_list) $logfile_list = array();
-//   print_r($logfile_list);
+}
+$skip = "";
+if(isset($options['skip']) && isset($options['l'])) $skip = $options['skip'];
+$data_folder = $config['data_folder'];
+
+if(file_exists($config['data_folder']."/logfiles_list.txt")) {
+  $logfile_list_handle = fopen($config['data_folder']."/logfiles_list.txt","r");
+  while(!feof($logfile_list_handle)) {
+    $entry = fgets($logfile_list_handle);
+    if(trim($entry)) $logfile_list[] = pathinfo(trim($entry),PATHINFO_BASENAME);
+  }
+  if($logfile_list_handle) fclose($logfile_list_handle);
+}
+if($verbose) print("Einlesen der bisherigen Logfile-List\n");
+if(!$logfile_list) $logfile_list = array();
+
+$logfile_counter = 0;
+if(!$logfiles && !isset($options['l'])) {
   $jahre = get_verzeichnis_array($config['in_folder'],"(\d\d\d\d)");
   foreach($jahre as $jahr) {
     if($jahr < $config['log_start_jahr']) {
@@ -65,7 +75,19 @@ if(!$logfiles) {
         }
         if($verbose) print("hinzugefügt zur aktuellen Logfile-List: $logfile\n");
         $logfiles[] = $logfile;
+        $logfile_counter++;
+        if($logfile_counter >= 7) break;
       }
+      if($logfile_counter >= 7) break;
+    }
+    if($logfile_counter >= 7) break;
+  }
+}
+else {
+  foreach($logfiles as $logfile_index => $logfile) {
+    if(in_array(pathinfo($logfile,PATHINFO_BASENAME), $logfile_list)) {
+      if($verbose) print("Logfile ".pathinfo($logfile,PATHINFO_BASENAME)." wurde bereits verarbeitet\n");
+      unset($logfiles[$logfile_index]);
     }
   }
 }
@@ -81,9 +103,12 @@ foreach($logfiles as $logfile) {
   print("wird bearbeitet: $logfile\n");
   if($verbose) print("Kopie in Current-Folder");
   copy($logfile, $config['data_folder'].$config['current-log_subfolder']."/".pathinfo($logfile,PATHINFO_BASENAME));
-  if($verbose) print(" - Bearbeitung durch matomo_import_log\n");
+  if($verbose) print(" - Bearbeitung durch matomo_import_log\n".
+                     "matomo_import_logs.py ".($skip?"--skip=$skip ":"").
+              $config['data_folder'].$config['current-log_subfolder']."\n");
+  
   passthru($config['data_folder'].'/bin/python2.7 '.
-              $config['data_folder'].'/matomo_import_logs.py '.
+              $config['data_folder'].'/matomo_import_logs.py '.($skip?"--skip=$skip ":"").
               $config['data_folder'].$config['current-log_subfolder']." > ".$config['data_folder']."/protokoll.txt", $return_var);
   if($return_var) print(" nicht");
   print(" erfolgreich ");
