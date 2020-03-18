@@ -21,7 +21,7 @@ $conf = new configFile ("../pedocs.conf");
 $prog_mail = $conf->value("prog_mail");
 $opusmail   = $conf->value("opusmail");
 # Parse command line options
-$options=getopt('vl:');$verbose = 0;
+$options=getopt('vl:',array('skip:'));$verbose = 0;
 $logfiles = array();
 if(isset($options['v'])) $verbose = 1;
 if(isset($options['l'])) {
@@ -31,6 +31,8 @@ if(isset($options['l'])) {
     exit;
   }
 }
+$skip = "";
+if(isset($options['skip']) && isset($options['l'])) $skip = $options['skip'];
 $data_folder = $config['data_folder'];
 
 if(file_exists($config['data_folder']."/logfiles_list.txt")) {
@@ -101,9 +103,12 @@ foreach($logfiles as $logfile) {
   print("wird bearbeitet: $logfile\n");
   if($verbose) print("Kopie in Current-Folder");
   copy($logfile, $config['data_folder'].$config['current-log_subfolder']."/".pathinfo($logfile,PATHINFO_BASENAME));
-  if($verbose) print(" - Bearbeitung durch matomo_import_log\n");
+  if($verbose) print(" - Bearbeitung durch matomo_import_log\n".
+                     "matomo_import_logs.py ".($skip?"--skip=$skip ":"").
+              $config['data_folder'].$config['current-log_subfolder']."\n");
+  
   passthru($config['data_folder'].'/bin/python2.7 '.
-              $config['data_folder'].'/matomo_import_logs.py '.
+              $config['data_folder'].'/matomo_import_logs.py '.($skip?"--skip=$skip ":"").
               $config['data_folder'].$config['current-log_subfolder']." > ".$config['data_folder']."/protokoll.txt", $return_var);
   if($return_var) print(" nicht");
   print(" erfolgreich ");
