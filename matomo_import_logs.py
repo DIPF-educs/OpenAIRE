@@ -1,4 +1,4 @@
-#!/usr/bin/python
+#!/usr/bin/env python3 
 # vim: et sw=4 ts=4:
 # -*- coding: utf-8 -*-
 #
@@ -10,7 +10,7 @@
 #
 # For more info see: https://matomo.org/log-analytics/ and https://matomo.org/docs/log-analytics-tool-how-to/
 #
-# Requires Python 2.6 or 2.7
+# Requires Python >= 3.4
 #
 
 import sys
@@ -44,9 +44,8 @@ except ImportError:
     try:
         import simplejson as json
     except ImportError:
-        if sys.version_info < (2, 6):
-            print('simplejson (http://pypi.python.org/pypi/simplejson/) is required.', file=sys.stderr)
-            sys.exit(1)
+        print('simplejson (http://pypi.python.org/pypi/simplejson/) is required.', file=sys.stderr)
+        sys.exit(1)
 
 
 
@@ -706,8 +705,7 @@ class Recorder(object):
 
     def __init__(self):
         self.hits = []
-        t = config.options["Matomo_Parameters"]["recorder_min_hits"]
-        self.threshold = t if t is not None else 1000
+        self.threshold = config.options.get("Matomo_Parameters", {}).get("recorder_min_hits", 1000)
 
     @classmethod
     def launch(cls, recorder_count):
@@ -725,7 +723,7 @@ class Recorder(object):
 
             t.daemon = True
             t.start()
-            logging.debug(f'Launched recorder {i}')
+            logging.debug(f'Launched recorder {i} with threshold {recorder.threshold}')
 
     @classmethod
     def add_hit(cls, hit):
@@ -764,6 +762,7 @@ class Recorder(object):
                 else:
                     self.hits.append(hit)
                     if len(self.hits) >= self.threshold:
+                        logging.debug("Trigger transport")
                         self._record_hits()
 
             except Matomo.Error as e:
@@ -1379,7 +1378,7 @@ class Parser(object):
                 filtered_line(line, reason)
                 continue
             if (not hit.is_robot) and (hit.is_meta or hit.is_download) and (not hit.is_redirect):
-                hits.append(hit)
+                Recorder.add_hit(hit)
             if (not hit.is_robot and not hit.is_redirect and hit.is_meta):
                 stats.count_lines_static.increment()
             if (not hit.is_robot and not hit.is_redirect and hit.is_download):

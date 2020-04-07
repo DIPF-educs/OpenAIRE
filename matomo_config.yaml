@@ -2,8 +2,8 @@ info: "OpenAIRE Matomo Tracker"
 
 Matomo_Parameters:
   #Matomo tracker Endpoint
-  #matomo_url: "http://localhost:5000"
-  matomo_url: "https://analytics.openaire.eu/"
+  matomo_url: "http://localhost:5000"
+  #matomo_url: "https://analytics.openaire.eu/"
 
   #Repository Base Url
   repository_base_url: "https://www.pedocs.de"
