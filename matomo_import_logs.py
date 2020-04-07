@@ -32,8 +32,6 @@ import sys
 import threading
 import time
 import urllib.request, urllib.parse, urllib.error
-import urllib.request, urllib.error, urllib.parse
-import urllib.parse
 import traceback
 import socket
 import textwrap
@@ -143,7 +141,6 @@ class JsonFormat(BaseFormat):
 
     def get_all(self,):
         return self.json
-
 
     def remove_ignored_groups(self, groups):
         for group in groups:
@@ -816,6 +813,9 @@ class Recorder(object):
         #    hit.add_visit_custom_var("Not-Bot", hit.user_agent)
 
 
+        if (hit.referrer.find("?q=") >=0):
+            hit.referrer = hit.referrer.split("?q=")[0]+"/?q=-"
+
         args = {
             'rec': '1',
             'apiv': '1',
@@ -1378,13 +1378,12 @@ class Parser(object):
             if is_filtered:
                 filtered_line(line, reason)
                 continue
-            if (not hit.is_robot) and (hit.is_meta or hit.is_download):
-                Recorder.add_hit(hit)
-            if (not hit.is_robot and hit.is_meta):
+            if (not hit.is_robot) and (hit.is_meta or hit.is_download) and (not hit.is_redirect):
+                hits.append(hit)
+            if (not hit.is_robot and not hit.is_redirect and hit.is_meta):
                 stats.count_lines_static.increment()
-            if (not hit.is_robot and hit.is_download):
+            if (not hit.is_robot and not hit.is_redirect and hit.is_download):
                 stats.count_lines_downloads.increment()
-
 
 class Statistics(object):
     """
@@ -1482,7 +1481,7 @@ The following lines were not tracked by Matomo, either due to a malformed tracke
 
 ''' % textwrap.fill(", ".join(self.invalid_lines), 80)
 
-        print(('''
+        print('''
 %(invalid_lines)sLogs import summary
 -------------------
 
@@ -1510,7 +1509,7 @@ Performance summary
             self.time_start, self.time_stop,
         )),
     'invalid_lines': invalid_lines_summary
-}))
+})
 
     ##
     ## The monitor is a thread that prints a short summary each second.
@@ -1522,12 +1521,12 @@ Performance summary
             current_total = stats.count_lines_recorded.value
             time_elapsed = time.time() - self.time_start
 
-            print(('%d lines parsed, %d lines recorded, %d records/sec (avg), %d records/sec (current)' % (
+            print('%d lines parsed, %d lines recorded, %d records/sec (avg), %d records/sec (current)' % (
                 stats.count_lines_parsed.value,
                 current_total,
                 current_total / time_elapsed if time_elapsed != 0 else 0,
                 current_total - latest_total_recorded,
-            )))
+            ))
             latest_total_recorded = current_total
             logging.info('%d lines parsed, %d lines recorded, %d records/sec (avg), %d records/sec (current)' % (
                 stats.count_lines_parsed.value,
