@@ -1,48 +1,45 @@
 info: "OpenAIRE Matomo Tracker"
 
 Matomo_Parameters:
-  #Matomo tracker Endpoint
+  # Matomo tracker Endpoint
   matomo_url: "http://localhost:5000"
   #matomo_url: "https://analytics.openaire.eu/"
 
-  #Repository Base Url
+  # Repository Base Url
   repository_base_url: "https://www.pedocs.de"
-  #Matomo Repository Site ID
+  # Matomo Repository Site ID
   idSite: 228
-  #Matomo authenticastion token
+  # Matomo authenticastion token
   token_auth: "32846584f571be9b57488bf4088f30ea"
-  #matomo parameters (default values)
+  # matomo parameters (default values)
   delay_after_failure: 10
   default_max_attempts: 3
   default_socket_timeout: 300
-  #IP Anonymization
+  # IP Anonymization
   ip_anonymization: false
-  #Skip the n first lines to start parsing/importing data at a given line for the specified log file
-  skip_lines: 0
+  # Skip the n first lines to start parsing/importing data at a given line for the specified log file
+  #skip_lines: 0
 
   # Number of recorders. It should be set to the number of CPU cores in your server.
   # You can also experiment with higher values which may increase performance until a certain point
   recorders: 10
   # OAI-PMH Configuration
   oaipmh_preamble: "oai:www.pedocs.de-opus:"
-  # OAI-PMH regular expressions to build the oaipmh id
-  oaipmh_regex_metadata: "([1-9][0-9]*)" 
-  # Zahlen, die mit einer Ziffer 1-9 anfangen und dann weitere mögliche Stellen 0-9 haben können
-  oaipmh_regex_download: "[1-9][0-9]*/([1-9][0-9]*)"
+  
+#   # OAI-PMH regular expressions to build the oaipmh id
+#   oaipmh_regex_metadata: "([1-9][0-9]*)"
+#   # Zahlen, die mit einer Ziffer 1-9 anfangen und dann weitere moegliche Stellen 0-9 haben können
+#   oaipmh_regex_download: "[12][0-9]{3}/([1-9][0-9]*)/pdf/\\w\\w*\\.pdf"
+#   # nach "volltexte/" kommt eine 4-stellige Zahl, wovon die erste Ziffer eine 1 oder eine 2 ist
+#   # (das ist die Jahreszahl)
+#   # und danach eine Zahl mit mindestens einer Stelle 1-9, gefolgt von beliebig vielen 
+#   # weiteren Ziffern/Stellen 0-9
+#   # Nach dem Verzeichnis "pdf/" kommt ein Dateinamen mit mindestens einem Wortzeichen, gefolgt von
+#   # beliebigen weiteren Wortzeichen (\w) mit einem abschliessenden literalen Punkt und der Endung pdf
+
   # Metadata Location (regexp supported)
   tracking_metadata:
-  - "/frontdoor.php\\?[^ ]*source_opus=([1-9][0-9]*)"
-  # Hinter dem Dateinamen steht mindestens ein literales Fragezeichen und dann noch optionale 
-  # weitere von Leerzeichen verschiedene Zeichen
-  # Hinter "source_opus=" kommt eine ein- oder mehrstellige Zahl, die mit einer Ziffer 1-9 beginnt
-  # und beliebig viele Stellen haben kann. Die gesamte Zahl (alle Ziffern) sollen zwischengespeichert werden
-  
-  #Item Location (regexp supported)
+  - "/frontdoor.php[^ ]*source_opus=([0-9]*)"
+  # Item Location (regexp supported)
   tracking_download:
-  - "/volltexte/[12][0-9]{3}/([1-9][0-9]*)/pdf/\\w\\w*\\.pdf"
-  # nach "volltexte/" kommt eine 4-stellige Zahl, wovon die erste Ziffer eine 1 oder eine 2 ist
-  # (das ist die Jahreszahl)
-  # und danach eine Zahl mit mindestens einer Stelle 1-9, gefolgt von beliebig vielen 
-  # weiteren Ziffern/Stellen 0-9
-  # Nach dem Verzeichnis "pdf/" kommt ein Dateinamen mit mindestens einem Wortzeichen, gefolgt von
-  # beliebigen weiteren Wortzeichen (\w) mit einem abschließenden literalen Punkt und der Endung pdf
+  - "/volltexte/[0-9]*/([0-9]*)/pdf/\\w*.pdf"
