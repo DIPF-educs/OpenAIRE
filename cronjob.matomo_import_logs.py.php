@@ -97,7 +97,7 @@ sort($logfiles);
 unset($logfile);
 print("\n");
 // exit;
-passthru('source '.$config['data_folder'].'/bin/activate');
+passthru('source '.$config['data_folder'].'/venv/bin/activate');
 $logfile_list_handle = fopen($config['data_folder']."/logfiles_list.txt","a");
 foreach($logfiles as $logfile) {
   print("wird bearbeitet: $logfile\n");
@@ -107,7 +107,7 @@ foreach($logfiles as $logfile) {
                      "matomo_import_logs.py ".($skip?"--skip=$skip ":"").
               $config['data_folder'].$config['current-log_subfolder']."\n");
   
-  passthru($config['data_folder'].'/bin/python '.
+  passthru($config['data_folder'].'/venv/bin/python '.
               $config['data_folder'].'/matomo_import_logs.py '.($skip?"--skip=$skip ":"").
               $config['data_folder'].$config['current-log_subfolder']." > ".$config['data_folder']."/protokoll.txt", $return_var);
   if($return_var) print(" nicht");
