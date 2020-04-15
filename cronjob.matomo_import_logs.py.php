@@ -107,7 +107,7 @@ foreach($logfiles as $logfile) {
                      "matomo_import_logs.py ".($skip?"--skip=$skip ":"").
               $config['data_folder'].$config['current-log_subfolder']."\n");
   
-  passthru($config['data_folder'].'/bin/python2.7 '.
+  passthru($config['data_folder'].'/bin/python '.
               $config['data_folder'].'/matomo_import_logs.py '.($skip?"--skip=$skip ":"").
               $config['data_folder'].$config['current-log_subfolder']." > ".$config['data_folder']."/protokoll.txt", $return_var);
   if($return_var) print(" nicht");
