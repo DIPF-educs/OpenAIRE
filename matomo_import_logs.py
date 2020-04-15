@@ -1024,17 +1024,13 @@ class Parser(object):
         if config.options["Matomo_Parameters"]["tracking_metadata"] is not None:
             for i in config.options["Matomo_Parameters"]["tracking_metadata"]:
                 pattern = re.compile(i)
-                tmpOAIPMH=i+config.options["Matomo_Parameters"]["oaipmh_regex_metadata"]
-                patternOAI=re.compile(tmpOAIPMH)
-                self.tracking_metadata.append((pattern, patternOAI))
+                self.tracking_metadata.append(pattern)
         #tracking_download
         self.tracking_download = []
         if config.options["Matomo_Parameters"]["tracking_download"] is not None:
                 for i in config.options["Matomo_Parameters"]["tracking_download"]:
                     pattern = re.compile(i)
-                    tmpOAIPMH=i+config.options["Matomo_Parameters"]["oaipmh_regex_download"]
-                    patternOAI=re.compile(tmpOAIPMH)
-                    self.tracking_download.append((pattern, patternOAI))
+                    self.tracking_download.append(pattern)
         #user_agents
         self.user_agents = []
         for p in checkRobots.counterRobotsList:
@@ -1046,26 +1042,23 @@ class Parser(object):
 
     def check_static(self, hit):
         for regEx in self.tracking_metadata:
-            if regEx[0].match(hit.path):
-                oai = regEx[1].match(hit.path)
-                if not oai is None:
-                    finalOAIpmh=config.options["Matomo_Parameters"]["oaipmh_preamble"]+oai.group(1)[oai.group(1).rfind("/")+1:]
-                    if finalOAIpmh!=config.options["Matomo_Parameters"]["oaipmh_preamble"]:
-                        hit.add_page_custom_var("oaipmhID",finalOAIpmh)
-                        hit.is_meta=True
-                        break
+            oai = regEx.match(hit.path)
+            if not oai is None:
+                finalOAIpmh=config.options["Matomo_Parameters"]["oaipmh_preamble"]+oai.group(1)[oai.group(1).rfind("/")+1:]
+                if finalOAIpmh!=config.options["Matomo_Parameters"]["oaipmh_preamble"]:
+                    hit.add_page_custom_var("oaipmhID",finalOAIpmh)
+                    hit.is_meta=True
         return True
 
     def check_download(self, hit):
         for regEx in self.tracking_download:
-            if regEx[0].match(hit.path):
-                oai = regEx[1].match(hit.path)
-                if not oai is None:
-                    finalOAIpmh=config.options["Matomo_Parameters"]["oaipmh_preamble"]+oai.group(1)[oai.group(1).rfind("/")+1:]
-                    if finalOAIpmh!=config.options["Matomo_Parameters"]["oaipmh_preamble"]:
-                        hit.add_page_custom_var("oaipmhID",finalOAIpmh)
-                        hit.is_download = True
-                        break
+            oai = regEx.match(hit.path)
+            if not oai is None:
+                finalOAIpmh=config.options["Matomo_Parameters"]["oaipmh_preamble"]+oai.group(1)[oai.group(1).rfind("/")+1:]
+                if finalOAIpmh!=config.options["Matomo_Parameters"]["oaipmh_preamble"]:
+                    hit.add_page_custom_var("oaipmhID",finalOAIpmh)
+                    hit.is_download = True
+                    break
         return True
 
     def check_user_agent(self, hit):
