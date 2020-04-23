@@ -1,4 +1,4 @@
-#!/usr/bin/env python3 
+#!/usr/bin/python
 # vim: et sw=4 ts=4:
 # -*- coding: utf-8 -*-
 #
@@ -10,33 +10,39 @@
 #
 # For more info see: https://matomo.org/log-analytics/ and https://matomo.org/docs/log-analytics-tool-how-to/
 #
-# Requires Python >= 3.4
+# Requires Python 2.6 or 2.7
 #
 
 import sys
 
 
+if sys.version_info[0] != 2:
+    print('The log importer currently does not work with Python 3 (or higher)')
+    print('Please use Python 2.6 or 2.7')
+    sys.exit(1)
 
 import bz2
 import datetime
 import gzip
-import http.client
+import httplib
 import inspect
 import itertools
 import logging
 import os
 import os.path
-import queue
+import Queue
 import re
 import sys
 import threading
 import time
-import urllib.request, urllib.parse, urllib.error
+import urllib
+import urllib2
+import urlparse
 import traceback
 import socket
 import textwrap
 import yaml
-from types import MethodType
+import getopt
 
 try:
     import json
@@ -44,8 +50,9 @@ except ImportError:
     try:
         import simplejson as json
     except ImportError:
-        print('simplejson (http://pypi.python.org/pypi/simplejson/) is required.', file=sys.stderr)
-        sys.exit(1)
+        if sys.version_info < (2, 6):
+            print >> sys.stderr, 'simplejson (http://pypi.python.org/pypi/simplejson/) is required.'
+            sys.exit(1)
 
 
 
@@ -57,7 +64,6 @@ MATOMO_DEFAULT_MAX_ATTEMPTS = 3
 MATOMO_DEFAULT_DELAY_AFTER_FAILURE = 10
 DEFAULT_SOCKET_TIMEOUT = 300
 
-#logging.basicConfig(level=logging.DEBUG)
 ##
 ## Formats.
 ##
@@ -65,12 +71,10 @@ DEFAULT_SOCKET_TIMEOUT = 300
 class BaseFormatException(Exception): pass
 
 class BaseFormat(object):
-    BASE_DATE_FORMAT = '%d/%b/%Y:%H:%M:%S'
     def __init__(self, name):
         self.name = name
         self.regex = None
-        self.date_format = BaseFormat.BASE_DATE_FORMAT
-        self.parseTime = MethodType(BaseFormat._parseTimeFast, self)
+        self.date_format = '%d/%b/%Y:%H:%M:%S'
 
     def check_format(self, file):
         line = file.readline()
@@ -81,18 +85,6 @@ class BaseFormat(object):
 
         return self.check_format_line(line)
 
-    def _parseTimeFast(self, date_string):
-        year = int(date_string[7:11])
-        month = MONTHS[date_string[3:6]]
-        day = int(date_string[0:2])
-        hour = int(date_string[12:14])
-        minute = int(date_string[15:17])
-        second = int(date_string[18:20])
-        return datetime.datetime(year, month, day, hour, minute, second)        
-
-    def _parseTimeSlow(self, date_string):
-        return datetime.datetime.strptime(date_string, self.date_format)
-
     def check_format_line(self, line):
         return False
 
@@ -101,7 +93,6 @@ class JsonFormat(BaseFormat):
         super(JsonFormat, self).__init__(name)
         self.json = None
         self.date_format = '%Y-%m-%dT%H:%M:%S'
-        self.parseTime = MethodType(BaseFormat._parseTimeSlow, self)
 
     def check_format_line(self, line):
         try:
@@ -153,8 +144,6 @@ class RegexFormat(BaseFormat):
             self.regex = re.compile(regex)
         if date_format is not None:
             self.date_format = date_format
-            if self.date_format != BaseFormat.BASE_DATE_FORMAT:
-                self.parseTime = MethodType(BaseFormat._parseTimeSlow, self)
         self.matched = None
 
     def check_format_line(self, line):
@@ -264,7 +253,7 @@ class W3cExtendedFormat(RegexFormat):
         #if config.options.w3c_time_taken_in_millisecs:
         #    expected_fields['time-taken'] = '(?P<generation_time_milli>[\d.]+)'
 
-        for mapped_field_name, field_name in config.options.custom_w3c_fields.items():
+        for mapped_field_name, field_name in config.options.custom_w3c_fields.iteritems():
             expected_fields[mapped_field_name] = expected_fields[field_name]
             del expected_fields[field_name]
 
@@ -329,7 +318,7 @@ class ShoutcastFormat(W3cExtendedFormat):
     def get(self, key):
         if key == 'user_agent':
             user_agent = super(ShoutcastFormat, self).get(key)
-            return urllib.parse.unquote(user_agent)
+            return urllib2.unquote(user_agent)
         else:
             return super(ShoutcastFormat, self).get(key)
 
@@ -361,7 +350,7 @@ class AmazonCloudFrontFormat(W3cExtendedFormat):
             return '200'
         elif key == 'user_agent':
             user_agent = super(AmazonCloudFrontFormat, self).get(key)
-            return urllib.parse.unquote(user_agent)
+            return urllib2.unquote(user_agent)
         else:
             return super(AmazonCloudFrontFormat, self).get(key)
 
@@ -477,7 +466,7 @@ class UrlHelper(object):
         """
 
         final_args = {}
-        for key, value in args.items():
+        for key, value in args.iteritems():
             indices = key.split('[')
             if '[' in key:
                 # contains list of all indices, eg for abc[def][ghi][] = 123, indices would be ['abc', 'def', 'ghi', '']
@@ -508,7 +497,7 @@ class UrlHelper(object):
     @staticmethod
     def _convert_dicts_to_arrays(d):
         # convert dicts that have contiguous integer keys to arrays
-        for key, value in d.items():
+        for key, value in d.iteritems():
             if not isinstance(value, dict):
                 continue
 
@@ -545,7 +534,7 @@ class Matomo(object):
 
             self.code = code
 
-    class RedirectHandlerWithLogging(urllib.request.HTTPRedirectHandler):
+    class RedirectHandlerWithLogging(urllib2.HTTPRedirectHandler):
         """
         Special implementation of HTTPRedirectHandler that logs redirects in debug mode
         to help users debug system issues.
@@ -554,7 +543,7 @@ class Matomo(object):
         def redirect_request(self, req, fp, code, msg, hdrs, newurl):
             logging.debug("Request redirected (code: %s) to '%s'" % (code, newurl))
 
-            return urllib.request.HTTPRedirectHandler.redirect_request(self, req, fp, code, msg, hdrs, newurl)
+            return urllib2.HTTPRedirectHandler.redirect_request(self, req, fp, code, msg, hdrs, newurl)
 
     @staticmethod
     def _call(path, args, headers=None, url=None, data=None):
@@ -563,17 +552,18 @@ class Matomo(object):
         arguments, to embed authentication, etc.
         """
         if url is None:
-            url = str(config.options['Matomo_Parameters']['matomo_url'])
+            url = config.options['Matomo_Parameters']['matomo_url']
         headers = headers or {}
 
         if data is None:
             # If Content-Type isn't defined, PHP do not parse the request's body.
             headers['Content-type'] = 'application/x-www-form-urlencoded'
-            data = urllib.parse.urlencode(args)
-        elif not isinstance(data, str) and headers['Content-type'] == 'application/json':
-            data = json.dumps(data).encode('utf-8')
+            data = urllib.urlencode(args)
+        elif not isinstance(data, basestring) and headers['Content-type'] == 'application/json':
+            data = json.dumps(data)
+
             if args:
-                path = path + '?' + urllib.parse.urlencode(args)
+                path = path + '?' + urllib.urlencode(args)
 
         headers['User-Agent'] = 'Matomo/LogImport'
 
@@ -582,15 +572,32 @@ class Matomo(object):
         except:
             timeout = None # the config global object may not be created at this point
 
-        request = urllib.request.Request(url + path, data, headers)
+        request = urllib2.Request(url + path, data, headers)
 
 
         # Use non-default SSL context if invalid certificates shall be
         # accepted.
-        https_handler_args = {}
-        opener = urllib.request.build_opener(
+        '''
+        if config.options.accept_invalid_ssl_certificate and \
+                sys.version_info >= (2, 7, 9):
+            ssl_context = ssl.create_default_context()
+            ssl_context.check_hostname = False
+            ssl_context.verify_mode = ssl.CERT_NONE
+            https_handler_args = {'context': ssl_context}
+        else:
+            https_handler_args = {}
+        opener = urllib2.build_opener(
             Matomo.RedirectHandlerWithLogging(),
-            urllib.request.HTTPSHandler(**https_handler_args))
+            urllib2.HTTPSHandler(**https_handler_args))
+        response = opener.open(request, timeout = timeout)
+        result = response.read()
+        response.close()
+        return result
+        '''
+        https_handler_args = {}
+        opener = urllib2.build_opener(
+            Matomo.RedirectHandlerWithLogging(),
+            urllib2.HTTPSHandler(**https_handler_args))
         response = opener.open(request, timeout = timeout)
         result = response.read()
         response.close()
@@ -616,7 +623,7 @@ class Matomo(object):
         # Warning: we have to pass the parameters in order: foo[0], foo[1], foo[2]
         # and not foo[1], foo[0], foo[2] (it will break Matomo otherwise.)
         final_args = []
-        for key, value in args.items():
+        for key, value in args.iteritems():
             if isinstance(value, (list, tuple)):
                 for index, obj in enumerate(value):
                     final_args.append(('%s[%d]' % (key, index), obj))
@@ -630,9 +637,9 @@ class Matomo(object):
         res = Matomo._call('/', final_args, url=url)
 
         try:
-            return json.loads(res.decode('utf-8'))
+            return json.loads(res)
         except ValueError:
-            raise urllib.error.URLError('Matomo returned an invalid response: ' + res)
+            raise urllib2.URLError('Matomo returned an invalid response: ' + res)
 
     @staticmethod
     def _call_wrapper(func, expected_response, on_failure, *args, **kwargs):
@@ -649,17 +656,17 @@ class Matomo(object):
                     else:
                         error_message = "didn't receive the expected response. Response was %s " % response
 
-                    raise urllib.error.URLError(error_message)
+                    raise urllib2.URLError(error_message)
                 return response
-            except (urllib.error.URLError, http.client.HTTPException, ValueError, socket.timeout) as e:
+            except (urllib2.URLError, httplib.HTTPException, ValueError, socket.timeout) as e:
                 logging.info('Error when connecting to Matomo: %s', e)
 
                 code = None
-                if isinstance(e, urllib.error.HTTPError):
+                if isinstance(e, urllib2.HTTPError):
                     # See Python issue 13211.
                     message = 'HTTP Error %s %s' % (e.code, e.msg)
                     code = e.code
-                elif isinstance(e, urllib.error.URLError):
+                elif isinstance(e, urllib2.URLError):
                     message = e.reason
                 else:
                     message = str(e)
@@ -701,82 +708,95 @@ class Recorder(object):
     """
 
     recorders = []
-    queue = queue.Queue()
 
     def __init__(self):
-        self.hits = []
-        self.threshold = config.options.get("Matomo_Parameters", {}).get("recorder_min_hits", 1000)
+        self.queue = Queue.Queue(maxsize=2)
+
+        # if bulk tracking disabled, make sure we can store hits outside of the Queue
+        #if not config.options.use_bulk_tracking:
+        #    self.unrecorded_hits = []
 
     @classmethod
     def launch(cls, recorder_count):
         """
         Launch a bunch of Recorder objects in a separate thread.
         """
-        for i in range(recorder_count):
+        for i in xrange(recorder_count):
             recorder = Recorder()
-            recorder.nbr = i
             cls.recorders.append(recorder)
 
             #run = recorder._run_bulk if config.options.use_bulk_tracking else recorder._run_single
-            run = recorder._run_bulk
+            run = recorder._run_bulk 
+            
             t = threading.Thread(target=run)
 
             t.daemon = True
             t.start()
-            logging.debug(f'Launched recorder {i} with threshold {recorder.threshold}')
-
-    @classmethod
-    def add_hit(cls, hit):
-        cls.queue.put(hit)
+            logging.debug('Launched recorder')
 
     @classmethod
     def add_hits(cls, all_hits):
         """
         Add a set of hits to the recorders queue.
         """
+        # Organize hits so that one client IP will always use the same queue.
+        # We have to do this so visits from the same IP will be added in the right order.
+        hits_by_client = [[] for r in cls.recorders]
         for hit in all_hits:
-            cls.queue.put(hit)
+            hits_by_client[hit.get_visitor_id_hash() % len(cls.recorders)].append(hit)
+
+        for i, recorder in enumerate(cls.recorders):
+            recorder.queue.put(hits_by_client[i])
 
     @classmethod
     def wait_empty(cls):
         """
         Wait until all recorders have an empty queue.
         """
-        #push none to signal final cleanup
-        logging.debug("Terminate recorders")
-        for i in cls.recorders:
-            cls.queue.put(None)
-        #then end
-        cls.queue.join()
+        for recorder in cls.recorders:
+            recorder._wait_empty()
 
     def _run_bulk(self):
         while True:
             try:
-                hit = Recorder.queue.get()
-                if hit is None:
-                    logging.debug(f"Terminate recorder {self.nbr}")
-                    #this recorder should terminate now
-                    #process remaining hits
-                    self._record_hits()
-                    break
-                else:
-                    self.hits.append(hit)
-                    if len(self.hits) >= self.threshold:
-                        logging.debug("Trigger transport")
-                        self._record_hits()
-
-            except Matomo.Error as e:
-                fatal_error(e, hit.filename, hit.lineno) # approximate location of error
-            except Exception as e:
-                import traceback
-                logging.error(f"Failed to process hit: {e}")
-                traceback.print_exc(file=sys.stderr)
+                hits = self.queue.get()
+            except:
                 # TODO: we should log something here, however when this happens, logging.etc will throw
                 return
-            finally:
-                #always end the loop
-                #this includes the break statement in `if hit is None:` case
-                Recorder.queue.task_done()
+
+            if len(hits) > 0:
+                try:
+                    self._record_hits(hits)
+                except Matomo.Error as e:
+                    fatal_error(e, hits[0].filename, hits[0].lineno) # approximate location of error
+            self.queue.task_done()
+
+    def _run_single(self):
+        while True:
+
+            if len(self.unrecorded_hits) > 0:
+                hit = self.unrecorded_hits.pop(0)
+
+                try:
+                    self._record_hits([hit])
+                except Matomo.Error as e:
+                    fatal_error(e, hit.filename, hit.lineno)
+            else:
+                self.unrecorded_hits = self.queue.get()
+                self.queue.task_done()
+
+    def _wait_empty(self):
+        """
+        Wait until the queue is empty.
+        """
+        while True:
+            if self.queue.empty():
+                # We still have to wait for the last queue item being processed
+                # (queue.empty() returns True before queue.task_done() is
+                # called).
+                self.queue.join()
+                return
+            time.sleep(1)
 
     def date_to_matomo(self, date):
         date, time = date.isoformat(sep=' ').split()
@@ -812,18 +832,18 @@ class Recorder(object):
         #    hit.add_visit_custom_var("Not-Bot", hit.user_agent)
 
 
-        if (hit.referrer.find("?q=") >=0):
-            hit.referrer = hit.referrer.split("?q=")[0]+"/?q=-"
+        if (hit.referrer.find("?") >=0):
+            hit.referrer = hit.referrer.split("?")[0]+" "
 
         args = {
             'rec': '1',
             'apiv': '1',
-            'url': url,
-            'urlref': hit.referrer[:1024],
+            'url': url.encode('utf8'),
+            'urlref': hit.referrer[:1024].encode('utf8'),
             'cip': hit.ip,
             'cdt': self.date_to_matomo(hit.date),
             'idsite': site_id,
-            'ua': hit.user_agent
+            'ua': hit.user_agent.encode('utf8')
         }
 
         # idsite is already determined by resolver
@@ -863,21 +883,21 @@ class Recorder(object):
             args['bw_bytes'] = hit.length
 
         # convert custom variable args to JSON
-        if 'cvar' in args and not isinstance(args['cvar'], str):
+        if 'cvar' in args and not isinstance(args['cvar'], basestring):
             args['cvar'] = json.dumps(args['cvar'])
 
-        if '_cvar' in args and not isinstance(args['_cvar'], str):
+        if '_cvar' in args and not isinstance(args['_cvar'], basestring):
             args['_cvar'] = json.dumps(args['_cvar'])
 
         return UrlHelper.convert_array_args(args)
 
     def _get_host_with_protocol(self, host, main_url):
         if '://' not in host:
-            parts = urllib.parse.urlparse(main_url)
+            parts = urlparse.urlparse(main_url)
             host = parts.scheme + '://' + host
         return host
 
-    def _record_hits(self):
+    def _record_hits(self, hits):
         """
         Inserts several hits into Matomo.
         """
@@ -885,12 +905,13 @@ class Recorder(object):
         #if not config.options.dry_run:
         data = {
             'token_auth': config.options['Matomo_Parameters']['token_auth'],
-            'requests': [self._get_hit_args(hit) for hit in self.hits]
+            'requests': [self._get_hit_args(hit) for hit in hits]
         }
 
         try:
             args = {}
- 
+
+
             response = matomo.call(
                 '/piwik.php', args=args,
                 expected_content=None,
@@ -900,7 +921,7 @@ class Recorder(object):
             )
             # check for invalid requests
             try:
-                response = json.loads(response.decode('utf-8'))
+                response = json.loads(response)
             except:
                 logging.info("bulk tracking returned invalid JSON")
 
@@ -910,7 +931,7 @@ class Recorder(object):
                 response['invalid_indices']):
                 invalid_count = len(response['invalid_indices'])
 
-                invalid_lines = [str(self.hits[index].lineno) for index in response['invalid_indices']]
+                invalid_lines = [str(hits[index].lineno) for index in response['invalid_indices']]
                 invalid_lines_str = ", ".join(invalid_lines)
 
                 #stats.invalid_lines.extend(invalid_lines)
@@ -921,14 +942,19 @@ class Recorder(object):
         except Matomo.Error as e:
             # if the server returned 400 code, BulkTracking may not be enabled
             if e.code == 400:
-                fatal_error("Server returned status 400 (Bad Request).\nIs the BulkTracking plugin disabled?", self.hits[0].filename, self.hits[0].lineno)
+                fatal_error("Server returned status 400 (Bad Request).\nIs the BulkTracking plugin disabled?", hits[0].filename, hits[0].lineno)
 
             raise
-        #increment stats
-        stats.count_lines_recorded.advance(len(self.hits))
-        #reset hits
-        self.hits.clear()
 
+        stats.count_lines_recorded.advance(len(hits))
+
+
+    def _is_json(self, result):
+        try:
+            json.loads(result)
+            return True
+        except ValueError as e:
+            return False
 
     def _on_tracking_failure(self, response, data):
         """
@@ -936,7 +962,7 @@ class Recorder(object):
         they are not logged twice.
         """
         try:
-            response = json.loads(response.decode('utf-8'))
+            response = json.loads(response)
         except:
             # the response should be in JSON, but in case it can't be parsed just try another attempt
             logging.debug("cannot parse tracker response, should be valid JSON")
@@ -953,7 +979,7 @@ class Hit(object):
     It's a simple container.
     """
     def __init__(self, **kwargs):
-        for key, value in kwargs.items():
+        for key, value in kwargs.iteritems():
             setattr(self, key, value)
         super(Hit, self).__init__()
 
@@ -985,7 +1011,7 @@ class Hit(object):
         if api_arg_name not in self.args:
             self.args[api_arg_name] = {}
 
-        if isinstance(self.args[api_arg_name], str):
+        if isinstance(self.args[api_arg_name], basestring):
             logging.debug("Ignoring custom %s variable addition [ %s = %s ], custom var already set to string." % (api_arg_name, key, value))
             return
 
@@ -1002,10 +1028,6 @@ class CheckRobots(object):
         self._readCOUNTERRobots()
 
 
-MONTHS = {'Jan': 1, 'Feb': 2, 'Mar': 3, 'Apr': 4,
-          'May': 5, 'Jun': 6, 'Jul': 7, 'Aug': 8,
-          'Sep': 9, 'Oct': 10, 'Nov': 11, 'Dec': 12}    
-
 class Parser(object):
     """
     The Parser parses the lines in a specified file and inserts them into
@@ -1016,81 +1038,63 @@ class Parser(object):
         self.check_methods = [method for name, method
                               in inspect.getmembers(self, predicate=inspect.ismethod)
                               if name.startswith('check_')]
-        self.gen_matcher()
-
-    def gen_matcher(self):
-        #tracking_metadata
-        self.tracking_metadata = []
-        if config.options["Matomo_Parameters"]["tracking_metadata"] is not None:
-            for i in config.options["Matomo_Parameters"]["tracking_metadata"]:
-                pattern = re.compile(i)
-                tmpOAIPMH=i+config.options["Matomo_Parameters"]["oaipmh_regex_metadata"]
-                patternOAI=re.compile(tmpOAIPMH)
-                self.tracking_metadata.append((pattern, patternOAI))
-        #tracking_download
-        self.tracking_download = []
-        if config.options["Matomo_Parameters"]["tracking_download"] is not None:
-                for i in config.options["Matomo_Parameters"]["tracking_download"]:
-                    pattern = re.compile(i)
-                    tmpOAIPMH=i+config.options["Matomo_Parameters"]["oaipmh_regex_download"]
-                    patternOAI=re.compile(tmpOAIPMH)
-                    self.tracking_download.append((pattern, patternOAI))
-        #user_agents
-        self.user_agents = []
-        for p in checkRobots.counterRobotsList:
-            self.user_agents.append(re.compile(p["pattern"]))
-
 
     ## All check_* methods are called for each hit and must return True if the
     ## hit can be imported, False otherwise.
 
+
     def check_static(self, hit):
-        for regEx in self.tracking_metadata:
-            if regEx[0].match(hit.path):
-                oai = regEx[1].match(hit.path)
-                if not oai is None:
-                    finalOAIpmh=config.options["Matomo_Parameters"]["oaipmh_preamble"]+oai.group(1)[oai.group(1).rfind("/")+1:]
-                    if finalOAIpmh!=config.options["Matomo_Parameters"]["oaipmh_preamble"]:
-                        hit.add_page_custom_var("oaipmhID",finalOAIpmh)
-                        hit.is_meta=True
-                        break
+        if config.options["Matomo_Parameters"]["tracking_metadata"] is not None:
+            for i in config.options["Matomo_Parameters"]["tracking_metadata"]:
+                    pattern = re.compile(i)
+                    if pattern.match(hit.path):
+                        patternOAI=re.compile(i)
+                        if patternOAI.match(hit.path):
+                            finalOAIpmh=config.options["Matomo_Parameters"]["oaipmh_preamble"]+patternOAI.match(hit.path).group(1)[patternOAI.match(hit.path).group(1).rfind("/")+1:]
+                            if finalOAIpmh!=config.options["Matomo_Parameters"]["oaipmh_preamble"]:
+                                hit.add_page_custom_var("oaipmhID",finalOAIpmh)
+                                hit.is_meta=True
         return True
 
     def check_download(self, hit):
-        for regEx in self.tracking_download:
-            if regEx[0].match(hit.path):
-                oai = regEx[1].match(hit.path)
-                if not oai is None:
-                    finalOAIpmh=config.options["Matomo_Parameters"]["oaipmh_preamble"]+oai.group(1)[oai.group(1).rfind("/")+1:]
-                    if finalOAIpmh!=config.options["Matomo_Parameters"]["oaipmh_preamble"]:
-                        hit.add_page_custom_var("oaipmhID",finalOAIpmh)
-                        hit.is_download = True
-                        break
+        if config.options["Matomo_Parameters"]["tracking_download"] is not None:
+            for i in config.options["Matomo_Parameters"]["tracking_download"]:
+                pattern = re.compile(i)
+                if pattern.match(hit.path):
+                    patternOAI=re.compile(i)
+                    if patternOAI.match(hit.path):
+                        finalOAIpmh=config.options["Matomo_Parameters"]["oaipmh_preamble"]+patternOAI.match(hit.path).group(1)[patternOAI.match(hit.path).group(1).rfind("/")+1:]
+                        if finalOAIpmh!=config.options["Matomo_Parameters"]["oaipmh_preamble"]:
+                            hit.add_page_custom_var("oaipmhID",finalOAIpmh)
+                            hit.is_download = True
         return True
 
     def check_user_agent(self, hit):
-        for robot in self.user_agents:
-            if robot.search(hit.user_agent):
+        user_agent = hit.user_agent
+        for p in checkRobots.counterRobotsList:
+            pattern = re.compile(p['pattern'])
+            if pattern.search(user_agent):
                 stats.count_lines_skipped_user_agent.increment()
                 hit.is_robot = True
                 break
         return True
 
     def check_http_error(self, hit):
-        if 4 <= int(hit.status[0]) <= 5:
+        if hit.status[0] in ('4', '5'):
             hit.is_error = True
+            return True
         return True
 
     def check_http_redirect(self, hit):
         if hit.status[0] == '3' and hit.status != '304':
              hit.is_redirect = True
+             return True
         return True
-
     @staticmethod
     def check_format(lineOrFile):
         format = False
         format_groups = 0
-        for name, candidate_format in FORMATS.items():
+        for name, candidate_format in FORMATS.iteritems():
             logging.debug("Check format %s", name)
 
             # skip auto detection for formats that can't be detected automatically
@@ -1099,7 +1103,7 @@ class Parser(object):
 
             match = None
             try:
-                if isinstance(lineOrFile, str):
+                if isinstance(lineOrFile, basestring):
                     match = candidate_format.check_format_line(lineOrFile)
                 else:
                     match = candidate_format.check_format(lineOrFile)
@@ -1130,8 +1134,7 @@ class Parser(object):
         # --w3c-time-taken-milli option isn't set
         if isinstance(format, W3cExtendedFormat):
             format.check_for_iis_option()
-        # dpie check
-        # print "Format name "+format.name
+        #print "Format name "+format.name
         return format
 
     @staticmethod
@@ -1177,7 +1180,7 @@ class Parser(object):
             host = hit.host
         else:
             try:
-                host = urllib.parse.urlparse(hit.path).hostname
+                host = urlparse.urlparse(hit.path).hostname
             except:
                 pass
         return (False, None)
@@ -1197,7 +1200,7 @@ class Parser(object):
             file = sys.stdin
         else:
             if not os.path.exists(filename):
-                print("\n=====> Warning: File %s does not exist <=====" % filename, file=sys.stderr)
+                print >> sys.stderr, "\n=====> Warning: File %s does not exist <=====" % filename
                 return
             else:
                 if filename.endswith('.bz2'):
@@ -1206,8 +1209,7 @@ class Parser(object):
                     open_func = gzip.open
                 else:
                     open_func = open
-                import io
-                file = io.TextIOWrapper(open_func(filename, 'rb'))
+                file = open_func(filename, 'r')
 
 
         format = self.detect_format(file)
@@ -1229,7 +1231,13 @@ class Parser(object):
             lineno = lineno + 1
 
             stats.count_lines_parsed.increment()
-            if stats.count_lines_parsed.value <= config.options["Matomo_Parameters"]["skip_lines"]:
+            skiplines=0
+            opts, args = getopt.getopt(sys.argv[1:],"s:",["skip="])
+
+            for opt, arg in opts:
+                if  opt in ("-s", "--skip"):
+                    skiplines = arg
+            if stats.count_lines_parsed.value <= int(skiplines):
                 continue
 
             match = format.match(line)
@@ -1238,20 +1246,12 @@ class Parser(object):
                 continue
 
             valid_lines_count = valid_lines_count + 1
-            try:
-                format_status = format.get('status')
-            except:
-                format_status = ""
-            try:
-                format_path = format.get('path')
-            except:
-                format_path = ""
 
             hit = Hit(
                 filename=filename,
                 lineno=lineno,
-                status=format_status,
-                full_path=format_path,
+                status=format.get('status'),
+                full_path=format.get('path'),
                 is_meta=False,
                 is_download=False,
                 is_robot=False,
@@ -1356,7 +1356,7 @@ class Parser(object):
             date_string = format.get('date')
 
             try:
-                hit.date = format.parseTime(date_string)
+                hit.date = datetime.datetime.strptime(date_string, format.date_format)
             except ValueError as e:
                 invalid_line(line, 'invalid date or invalid format: %s' % str(e))
                 continue
@@ -1370,6 +1370,8 @@ class Parser(object):
                 invalid_line(line, 'invalid timezone')
                 continue
 
+            f= open("out","a")    
+
             if timezone:
                 hit.date -= datetime.timedelta(hours=timezone/100)
 
@@ -1378,11 +1380,21 @@ class Parser(object):
                 filtered_line(line, reason)
                 continue
             if (not hit.is_robot) and (hit.is_meta or hit.is_download) and (not hit.is_redirect):
-                Recorder.add_hit(hit)
+                hits.append(hit)
             if (not hit.is_robot and not hit.is_redirect and hit.is_meta):
                 stats.count_lines_static.increment()
             if (not hit.is_robot and not hit.is_redirect and hit.is_download):
                 stats.count_lines_downloads.increment()
+
+            #else:
+            # f.write("not pass "+ hit.full_path +" "+hit.user_agent+'\n')
+            if len(hits) >= 200 * len(Recorder.recorders):
+                Recorder.add_hits(hits)
+                hits = []
+        # add last chunk of hits
+        if len(hits) > 0:
+            Recorder.add_hits(hits)
+
 
 class Statistics(object):
     """
@@ -1402,7 +1414,7 @@ class Statistics(object):
             self.value = 0
 
         def increment(self):
-            self.value = next(self.counter)
+            self.value = self.counter.next()
 
         def advance(self, n):
             for i in range(n):
@@ -1460,7 +1472,7 @@ class Statistics(object):
         line (as a string). One level of indentation is 4 spaces.
         """
         prefix = ' ' * (4 * level)
-        if isinstance(lines, str):
+        if isinstance(lines, basestring):
             return prefix + lines
         else:
             return '\n'.join(
@@ -1575,12 +1587,12 @@ def main():
     stats.print_summary()
 
 def fatal_error(error, filename=None, lineno=None):
-    print('Fatal error: %s' % error, file=sys.stderr)
+    print >> sys.stderr, 'Fatal error: %s' % error
     if filename and lineno is not None:
-        print((
+        print >> sys.stderr, (
             'You can restart the import of "%s" from the point it failed by '
             'specifying --skip=%d on the command line.\n' % (filename, lineno)
-        ), file=sys.stderr)
+        )
     os._exit(1)
 
 if __name__ == '__main__':
