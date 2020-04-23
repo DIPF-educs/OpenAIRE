@@ -881,7 +881,9 @@ class Recorder(object):
         """
         Inserts several hits into Matomo.
         """
-
+        #check if we need to do something
+        if len(self.hits) == 0:
+            return
         #if not config.options.dry_run:
         data = {
             'token_auth': config.options['Matomo_Parameters']['token_auth'],
