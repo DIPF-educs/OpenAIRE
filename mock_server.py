@@ -1,7 +1,9 @@
 from flask import Flask, abort, request
 import json
+import logging
 
 app = Flask(__name__)
+logging.basicConfig(level=logging.DEBUG)
 
 @app.route('/')
 def dummy():
@@ -11,6 +13,7 @@ def dummy():
 def piwik():
     app.logger.info('Got: %d bytes' % request.content_length)
     if request.is_json:
+        request.json["debug_bytes"] = request.content_length
         with open('server.json', 'a') as fp:
             fp.write(json.dumps(request.json) + '\n')
     return {'success': True}
