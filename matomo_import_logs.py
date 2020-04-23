@@ -666,7 +666,7 @@ class Matomo(object):
 
                 # decorate message w/ HTTP response, if it can be retrieved
                 if hasattr(e, 'read'):
-                    message = message + ", response: " + e.read()
+                    message = message + ", response: " + str(e.read())
 
                 try:
                     delay_after_failure = config.options["Matomo_Parameters"]["delay_after_failure"]
@@ -1221,6 +1221,7 @@ class Parser(object):
             if not line: break
             lineno = lineno + 1
 
+
             stats.count_lines_parsed.increment()
             if stats.count_lines_parsed.value <= config.options["Matomo_Parameters"]["skip_lines"]:
                 continue
@@ -1376,6 +1377,7 @@ class Parser(object):
                 stats.count_lines_static.increment()
             if (not hit.is_robot and not hit.is_redirect and hit.is_download):
                 stats.count_lines_downloads.increment()
+            break
 
 class Statistics(object):
     """
