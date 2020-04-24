@@ -61,7 +61,8 @@ DEFAULT_SOCKET_TIMEOUT = 300
 ARGS = ArgumentParser()
 ARGS.add_argument("--debug", action="store_true", help="Enable debugging")
 ARGS.add_argument("--server", help="Overwrite the destination matomo server")
-ARGS.add_argument("--skip -s", type=int, default=0, help="Skip the given amount of lines in the logs (useful to continue processing)")
+ARGS.add_argument("--dry-run", action="store_true", help="Enable dry run, i.e. don't send data to server")
+ARGS.add_argument("-s", "--skip", type=int, default=0, help="Skip the given amount of lines in the logs (useful to continue processing)")
 ARGS.add_argument("logs", help="Directory containing the log-files")
 ##
 ## Formats.
@@ -234,8 +235,6 @@ class W3cExtendedFormat(RegexFormat):
 
     def create_regex(self, file):
         fields_line = None
-        #if config.options.w3c_fields:
-        #    fields_line = config.options.w3c_fields
 
         # collect all header lines up until the Fields: line
         # if we're reading from stdin, we can't seek, so don't read any more than the Fields line
@@ -266,16 +265,12 @@ class W3cExtendedFormat(RegexFormat):
         expected_fields = type(self).fields.copy() # turn custom field mapping into field => regex mapping
 
         # if the --w3c-time-taken-millisecs option is used, make sure the time-taken field is interpreted as milliseconds
-        #if config.options.w3c_time_taken_in_millisecs:
-        #    expected_fields['time-taken'] = '(?P<generation_time_milli>[\d.]+)'
 
-        for mapped_field_name, field_name in config.options.custom_w3c_fields.items():
+        for mapped_field_name, field_name in config.options["custom_w3c_fields"].items():
             expected_fields[mapped_field_name] = expected_fields[field_name]
             del expected_fields[field_name]
 
         # add custom field regexes supplied through --w3c-field-regex option
-        #for field_name, field_regex in config.options.w3c_field_regexes.iteritems():
-        #    expected_fields[field_name] = field_regex
 
         # Skip the 'Fields: ' prefix.
         fields_line = fields_line[9:].strip()
@@ -436,10 +431,11 @@ class Configuration(object):
         self._init_config()
 
     def _parse_config(self):
-        matomoConfig = None
         with open("matomo_config.yaml", 'r') as stream:
             try:
-                self.options =yaml.load(stream, Loader=yaml.FullLoader)
+                opts =yaml.load(stream, Loader=yaml.FullLoader)
+                #extract matomo parameters
+                self.options = opts['Matomo_Parameters']
             except yaml.YAMLError as exc:
                 print(exc)
                 fatal_error("Failed to parse config file. Please correct errors")
@@ -454,17 +450,27 @@ class Configuration(object):
         self.filenames  = [(filePath+"/"+x) for x in os.listdir(filePath)]
     
     def _init_config(self):
+        # Configure logging
+        root = logging.getLogger()        
+        fmt = logging.Formatter('%(asctime)s: [%(levelname)s] %(message)s')
+        fileLog = logging.FileHandler("Matomo_import.log", mode="a")
+        fileLog.setLevel(logging.DEBUG if self.debug else logging.INFO)
+        fileLog.setFormatter(fmt)
+        root.addHandler(fileLog)
+        console = logging.StreamHandler()
+        console.setLevel(logging.DEBUG if self.debug else logging.ERROR)
+        console.setFormatter(logging.Formatter("%(levelname)s: %(message)s"))
+        root.addHandler(console)
         #override matomo config vars, where applicable
-        self.options['Matomo_Parameters']['skip'] = self._args.skip
-        if self._args.server:
-            self.options['Matomo_Parameters']['matomo_url'] = self._args.server
-        # Configure logging before calling logging.{debug,info}.
-        logging.basicConfig(
-            format='%(asctime)s: [%(levelname)s] %(message)s',
-            filename='Matomo_import.log',
-            level=logging.INFO if not self._args.debug else logging.DEBUG,
-        )
+        root.setLevel(logging.DEBUG if self.debug else logging.INFO)
+        logging.debug("Initialized")
+        logging.critical("What")
+        if self.server:
+            logging.debug(f"Using {self._args.server} as matomo url (override)")
+            self.options["matomo_url"] = self.server
 
+    def __getattr__(self, name):
+        return getattr(self._args, name, self.options.get(name, None))
 
 class UrlHelper(object):
 
@@ -537,6 +543,14 @@ class Matomo(object):
     """
     Make requests to Matomo.
     """
+    def __init__(self):
+        self.url = config.matomo_url
+        self._send_request = self._real_request
+        #check if we should really send
+        if config.dry_run:
+            logging.info("Doing dry run")
+            self._send_request = self._fake_request
+
     class Error(Exception):
 
         def __init__(self, message, code = None):
@@ -552,17 +566,30 @@ class Matomo(object):
 
         def redirect_request(self, req, fp, code, msg, hdrs, newurl):
             logging.debug("Request redirected (code: %s) to '%s'" % (code, newurl))
-
             return urllib.request.HTTPRedirectHandler.redirect_request(self, req, fp, code, msg, hdrs, newurl)
 
-    @staticmethod
-    def _call(path, args, headers=None, url=None, data=None):
+    def _fake_request(self, request):
+        logging.info(f"Would send {request.get_method()} - {request.full_url} with {len(request.data)} bytes.")
+        return b"{}"
+
+    def _real_request(self, request):
+        # Use non-default SSL context if invalid certificates shall be
+        # accepted.
+        https_handler_args = {}
+        opener = urllib.request.build_opener(
+            Matomo.RedirectHandlerWithLogging(),
+            urllib.request.HTTPSHandler(**https_handler_args))
+        response = opener.open(request, timeout = config.options.get("default_socket_timeout", None))
+        result = response.read()
+        response.close()
+        return result
+
+    def _call(self, path, args, headers=None, url=None, data=None):
         """
         Make a request to the Matomo site. It is up to the caller to format
         arguments, to embed authentication, etc.
         """
-        if url is None:
-            url = str(config.options['Matomo_Parameters']['matomo_url'])
+        url = url or self.url
         headers = headers or {}
 
         if data is None:
@@ -576,27 +603,11 @@ class Matomo(object):
 
         headers['User-Agent'] = 'Matomo/LogImport'
 
-        try:
-            timeout = config.options['Matomo_Parameters']['default_socket_timeout']
-        except:
-            timeout = None # the config global object may not be created at this point
-
         request = urllib.request.Request(url + path, data, headers)
 
+        return self._send_request(request)
 
-        # Use non-default SSL context if invalid certificates shall be
-        # accepted.
-        https_handler_args = {}
-        opener = urllib.request.build_opener(
-            Matomo.RedirectHandlerWithLogging(),
-            urllib.request.HTTPSHandler(**https_handler_args))
-        response = opener.open(request, timeout = timeout)
-        result = response.read()
-        response.close()
-        return result
-
-    @staticmethod
-    def _call_api(method, **kwargs):
+    def _call_api(self, method, **kwargs):
         """
         Make a request to the Matomo API taking care of authentication, body
         formatting, etc.
@@ -625,15 +636,14 @@ class Matomo(object):
 
         logging.debug(f"Arguments: {final_args}")
 
-        res = Matomo._call('/', final_args)
+        res = self._call('/', final_args)
 
         try:
             return json.loads(res.decode('utf-8'))
         except ValueError:
             raise urllib.error.URLError('Matomo returned an invalid response: ' + res)
 
-    @staticmethod
-    def _call_wrapper(func, expected_response, on_failure, *args, **kwargs):
+    def _call_wrapper(self, func, expected_response, on_failure, *args, **kwargs):
         """
         Try to make requests to Matomo at most MATOMO_FAILURE_MAX_RETRY times.
         """
@@ -667,8 +677,8 @@ class Matomo(object):
                     message = message + ", response: " + str(e.read())
 
                 try:
-                    delay_after_failure = config.options["Matomo_Parameters"]["delay_after_failure"]
-                    max_attempts = config.options["Matomo_Parameters"]["default_max_attempts"]
+                    delay_after_failure = config.options["delay_after_failure"]
+                    max_attempts = config.options["default_max_attempts"]
                 except NameError:
                     delay_after_failure = MATOMO_DEFAULT_DELAY_AFTER_FAILURE
                     max_attempts = MATOMO_DEFAULT_MAX_ATTEMPTS
@@ -683,14 +693,12 @@ class Matomo(object):
 
                     time.sleep(delay_after_failure)
 
-    @classmethod
-    def call(cls, path, args, expected_content=None, headers=None, data=None, on_failure=None):
-        return cls._call_wrapper(cls._call, expected_content, on_failure, path, args, headers,
+    def call(self, path, args, expected_content=None, headers=None, data=None, on_failure=None):
+        return self._call_wrapper(self._call, expected_content, on_failure, path, args, headers,
                                     data=data)
 
-    @classmethod
-    def call_api(cls, method, **kwargs):
-        return cls._call_wrapper(cls._call_api, None, None, method, **kwargs)
+    def call_api(self, method, **kwargs):
+        return self._call_wrapper(self._call_api, None, None, method, **kwargs)
 
 class Recorder(object):
     """
@@ -703,7 +711,7 @@ class Recorder(object):
 
     def __init__(self):
         self.hits = []
-        self.threshold = config.options.get("Matomo_Parameters", {}).get("recorder_min_hits", 1000)
+        self.threshold = config.options.get("recorder_min_hits", 1000)
 
     @classmethod
     def launch(cls, recorder_count):
@@ -715,9 +723,7 @@ class Recorder(object):
             recorder.nbr = i
             cls.recorders.append(recorder)
 
-            #run = recorder._run_bulk if config.options.use_bulk_tracking else recorder._run_single
-            run = recorder._run_bulk
-            t = threading.Thread(target=run)
+            t = threading.Thread(target=recorder._run_bulk)
 
             t.daemon = True
             t.start()
@@ -785,30 +791,17 @@ class Recorder(object):
         Returns the args used in tracking a hit, without the token_auth.
         """
         #site_id, main_url = resolver.resolve(hit)
-        site_id = config.options['Matomo_Parameters']['idSite']
+        site_id = config.options["idSite"]
         #repositoy base url
-        main_url = config.options['Matomo_Parameters']['repository_base_url']
+        main_url = config.options["repository_base_url"]
 
         #stats.dates_recorded.add(hit.date.date())
 
         path = hit.path
 
-        '''
-        query_string_delimiter="?"
-        if hit.query_string:
-            path += config.options.query_string_delimiter + hit.query_string
-        '''
-
         # only prepend main url / host if it's a path
         url_prefix = self._get_host_with_protocol(hit.host, main_url) if hasattr(hit, 'host') else main_url
         url = (url_prefix if path.startswith('/') else '') + path[:1024]
-
-        # handle custom variables before generating args dict
-        #if hit.is_robot:
-        #    hit.add_visit_custom_var("Bot", hit.user_agent)
-        #else:
-        #    hit.add_visit_custom_var("Not-Bot", hit.user_agent)
-
 
         if (hit.referrer.find("?q=") >=0):
             hit.referrer = hit.referrer.split("?q=")[0]+"/?q=-"
@@ -833,20 +826,8 @@ class Recorder(object):
         if hit.is_download:
             args['download'] = args['url']
 
-        #if config.options.enable_bots:
         args['bots'] = '1'
 
-        '''
-        if hit.is_error or hit.is_redirect:
-            args['action_name'] = '%s%sURL = %s%s' % (
-                hit.status, '/',
-                urllib.quote(args['url'], ''),
-                ("%sFrom = %s" % (
-                    '/',
-                    urllib.quote(args['urlref'], '')
-                ) if args['urlref'] != ''  else '')
-            )
-        '''
         if hit.generation_time_milli > 0:
             args['gt_ms'] = int(hit.generation_time_milli)
 
@@ -883,9 +864,9 @@ class Recorder(object):
         if len(self.hits) == 0:
             logging.debug("Worker already depleted -> shutting down directly")
             return
-        #if not config.options.dry_run:
+        
         data = {
-            'token_auth': config.options['Matomo_Parameters']['token_auth'],
+            'token_auth': config.options["token_auth"],
             'requests': [self._get_hit_args(hit) for hit in self.hits]
         }
 
@@ -961,13 +942,6 @@ class Hit(object):
 
     def get_visitor_id_hash(self):
         visitor_id = self.ip
-        '''
-        if config.options.replay_tracking:
-            for param_name_to_use in ['uid', 'cid', '_id', 'cip']:
-                if param_name_to_use in self.args:
-                    visitor_id = self.args[param_name_to_use]
-                    break
-        '''
         return abs(hash(visitor_id))
 
     def add_page_custom_var(self, key, value):
@@ -1022,14 +996,14 @@ class Parser(object):
     def gen_matcher(self):
         #tracking_metadata
         self.tracking_metadata = []
-        if config.options["Matomo_Parameters"]["tracking_metadata"] is not None:
-            for i in config.options["Matomo_Parameters"]["tracking_metadata"]:
+        if config.options["tracking_metadata"] is not None:
+            for i in config.options["tracking_metadata"]:
                 pattern = re.compile(i)
                 self.tracking_metadata.append(pattern)
         #tracking_download
         self.tracking_download = []
-        if config.options["Matomo_Parameters"]["tracking_download"] is not None:
-                for i in config.options["Matomo_Parameters"]["tracking_download"]:
+        if config.options["tracking_download"] is not None:
+                for i in config.options["tracking_download"]:
                     pattern = re.compile(i)
                     self.tracking_download.append(pattern)
         #user_agents
@@ -1045,8 +1019,8 @@ class Parser(object):
         for regEx in self.tracking_metadata:
             oai = regEx.match(hit.path)
             if not oai is None:
-                finalOAIpmh=config.options["Matomo_Parameters"]["oaipmh_preamble"]+oai.group(1)[oai.group(1).rfind("/")+1:]
-                if finalOAIpmh!=config.options["Matomo_Parameters"]["oaipmh_preamble"]:
+                finalOAIpmh=config.options["oaipmh_preamble"]+oai.group(1)[oai.group(1).rfind("/")+1:]
+                if finalOAIpmh!=config.options["oaipmh_preamble"]:
                     hit.add_page_custom_var("oaipmhID",finalOAIpmh)
                     hit.is_meta=True
         return True
@@ -1055,8 +1029,8 @@ class Parser(object):
         for regEx in self.tracking_download:
             oai = regEx.match(hit.path)
             if not oai is None:
-                finalOAIpmh=config.options["Matomo_Parameters"]["oaipmh_preamble"]+oai.group(1)[oai.group(1).rfind("/")+1:]
-                if finalOAIpmh!=config.options["Matomo_Parameters"]["oaipmh_preamble"]:
+                finalOAIpmh=config.options["oaipmh_preamble"]+oai.group(1)[oai.group(1).rfind("/")+1:]
+                if finalOAIpmh!=config.options["oaipmh_preamble"]:
                     hit.add_page_custom_var("oaipmhID",finalOAIpmh)
                     hit.is_download = True
                     break
@@ -1125,7 +1099,6 @@ class Parser(object):
         if isinstance(format, W3cExtendedFormat):
             format.check_for_iis_option()
         # dpie check
-        # print "Format name "+format.name
         return format
 
     @staticmethod
@@ -1191,7 +1164,7 @@ class Parser(object):
             file = sys.stdin
         else:
             if not os.path.exists(filename):
-                print("\n=====> Warning: File %s does not exist <=====" % filename, file=sys.stderr)
+                logging.warn(f"=====> File {file} does not exist <=====")
                 return
             else:
                 if filename.endswith('.bz2'):
@@ -1224,7 +1197,7 @@ class Parser(object):
 
 
             stats.count_lines_parsed.increment()
-            if stats.count_lines_parsed.value <= config.options["Matomo_Parameters"]["skip_lines"]:
+            if stats.count_lines_parsed.value <= config.skip:
                 continue
 
             match = format.match(line)
@@ -1254,16 +1227,7 @@ class Parser(object):
                 is_redirect=False,
                 args={},
             )
-            '''
-            todelete
-            # Add http method page cvar
-            try:
-                httpmethod = format.get('method')
-                if config.options.track_http_method and httpmethod != '-':
-                    hit.add_page_custom_var('HTTP-method', httpmethod)
-            except:
-                pass
-            '''
+
             # W3cExtendedFormat detaults to - when there is no query string, but we want empty string
             hit.query_string = ''
             hit.path = hit.full_path
@@ -1291,8 +1255,9 @@ class Parser(object):
             hit.ip = format.get('ip')
 
             #IP anonymization
-            if config.options['Matomo_Parameters']['ip_anonymization'] is True:
-                hit.ip = hit.ip.split('.')[0]+"."+hit.ip.split('.')[1]+".0.0"
+            if config.options["ip_anonymization"]:
+                ip0, ip1, *_ = hit.ip.split('.')
+                hit.ip = f"{ip0}.{ip1}.0.0"
 
             try:
                 hit.length = int(format.get('length'))
@@ -1475,7 +1440,7 @@ The following lines were not tracked by Matomo, either due to a malformed tracke
 
 ''' % textwrap.fill(", ".join(self.invalid_lines), 80)
 
-        print('''
+        logging.info('''
 %(invalid_lines)sLogs import summary
 -------------------
 
@@ -1515,12 +1480,6 @@ Performance summary
             current_total = stats.count_lines_recorded.value
             time_elapsed = time.time() - self.time_start
 
-            print('%d lines parsed, %d lines recorded, %d records/sec (avg), %d records/sec (current)' % (
-                stats.count_lines_parsed.value,
-                current_total,
-                current_total / time_elapsed if time_elapsed != 0 else 0,
-                current_total - latest_total_recorded,
-            ))
             logging.info('%d lines parsed, %d lines recorded, %d records/sec (avg), %d records/sec (current)' % (
                 stats.count_lines_parsed.value,
                 current_total,
@@ -1544,12 +1503,8 @@ def main():
     Start the importing process.
     """
     stats.set_time_start()
-    ''''
-    if config.options.show_progress:
-        stats.start_monitor()
-    '''
     stats.start_monitor()
-    recorders = Recorder.launch(config.options["Matomo_Parameters"]["recorders"])
+    recorders = Recorder.launch(config.options["recorders"])
 
     try:
         for filename in config.filenames:
@@ -1561,17 +1516,13 @@ def main():
         pass
 
     stats.set_time_stop()
-    '''
-    if config.options.show_progress:
-        stats.stop_monitor()
-    '''
     stats.stop_monitor()
     stats.print_summary()
 
 def fatal_error(error, filename=None, lineno=None):
-    print('Fatal error: %s' % error, file=sys.stderr)
+    logging.critical('Fatal error: %s' % error, file=sys.stderr)
     if filename and lineno:
-        print(f'You can restart the import of "{filename}" from the point it failed by specifying --skip={lineno} on the command line.', file=sys.stderr)
+        logging.critical(f'You can restart the import of "{filename}" from the point it failed by specifying --skip={lineno} on the command line.', file=sys.stderr)
     exit(1)
 
 if __name__ == '__main__':
