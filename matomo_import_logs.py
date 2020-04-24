@@ -458,13 +458,12 @@ class Configuration(object):
         fileLog.setFormatter(fmt)
         root.addHandler(fileLog)
         console = logging.StreamHandler()
-        console.setLevel(logging.DEBUG if self.debug else logging.ERROR)
+        console.setLevel(logging.DEBUG if self.debug else logging.INFO)
         console.setFormatter(logging.Formatter("%(levelname)s: %(message)s"))
         root.addHandler(console)
         #override matomo config vars, where applicable
         root.setLevel(logging.DEBUG if self.debug else logging.INFO)
         logging.debug("Initialized")
-        logging.critical("What")
         if self.server:
             logging.debug(f"Using {self._args.server} as matomo url (override)")
             self.options["matomo_url"] = self.server
