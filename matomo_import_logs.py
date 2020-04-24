@@ -36,6 +36,7 @@ import traceback
 import socket
 import textwrap
 import yaml
+from argparse import ArgumentParser
 from types import MethodType
 
 try:
@@ -57,7 +58,11 @@ MATOMO_DEFAULT_MAX_ATTEMPTS = 3
 MATOMO_DEFAULT_DELAY_AFTER_FAILURE = 10
 DEFAULT_SOCKET_TIMEOUT = 300
 
-#logging.basicConfig(level=logging.DEBUG)
+ARGS = ArgumentParser()
+ARGS.add_argument("--debug", action="store_true", help="Enable debugging")
+ARGS.add_argument("--server", help="Overwrite the destination matomo server")
+ARGS.add_argument("--skip -s", type=int, default=0, help="Skip the given amount of lines in the logs (useful to continue processing)")
+ARGS.add_argument("logs", help="Directory containing the log-files")
 ##
 ## Formats.
 ##
@@ -425,46 +430,40 @@ class Configuration(object):
     class Error(Exception):
         pass
 
-    def _create_parser(self):
+    def __init__(self):
+        self._parse_config()
+        self._parse_args()
+        self._init_config()
+
+    def _parse_config(self):
         matomoConfig = None
         with open("matomo_config.yaml", 'r') as stream:
             try:
-                matomoConfig=yaml.load(stream, Loader=yaml.FullLoader)
+                self.options =yaml.load(stream, Loader=yaml.FullLoader)
             except yaml.YAMLError as exc:
                 print(exc)
+                fatal_error("Failed to parse config file. Please correct errors")
 
-
-        """
-        Initialize and return the OptionParser instance.
-        """
-        self.options = matomoConfig
-        return self.options
-
-
-    def _parse_args(self, options):
+    def _parse_args(self):
         """
         Parse the command line args and create self.options and self.filenames.
         """
-        filePath = os.path.abspath(os.path.abspath(sys.argv[-1]))
+        global ARGS
+        self._args = ARGS.parse_args()
+        filePath = os.path.abspath(self._args.logs)
         self.filenames  = [(filePath+"/"+x) for x in os.listdir(filePath)]
+    
+    def _init_config(self):
+        #override matomo config vars, where applicable
+        self.options['Matomo_Parameters']['skip'] = self._args.skip
+        if self._args.server:
+            self.options['Matomo_Parameters']['matomo_url'] = self._args.server
         # Configure logging before calling logging.{debug,info}.
         logging.basicConfig(
             format='%(asctime)s: [%(levelname)s] %(message)s',
             filename='Matomo_import.log',
-            level=logging.INFO,
+            level=logging.INFO if not self._args.debug else logging.DEBUG,
         )
-
-    def __init__(self):
-        self._parse_args(self._create_parser())
-
-    def get_resolver(self):
-        if self.options.site_id:
-            logging.debug('Resolver: static')
-            return StaticResolver(self.options.site_id)
-        else:
-            logging.debug('Resolver: dynamic')
-            return DynamicResolver()
-
 
 
 class UrlHelper(object):
@@ -624,10 +623,9 @@ class Matomo(object):
                 final_args.append((key, value))
 
 
-#        logging.debug('%s' % final_args)
-#        logging.debug('%s' % url)
+        logging.debug(f"Arguments: {final_args}")
 
-        res = Matomo._call('/', final_args, url=url)
+        res = Matomo._call('/', final_args)
 
         try:
             return json.loads(res.decode('utf-8'))
@@ -1551,13 +1549,12 @@ def main():
         stats.start_monitor()
     '''
     stats.start_monitor()
-    #recorders = Recorder.launch(config.options.recorders)
     recorders = Recorder.launch(config.options["Matomo_Parameters"]["recorders"])
 
     try:
         for filename in config.filenames:
-            parser.parse(filename)
             logging.info("Reading..."+filename)
+            parser.parse(filename)
 
         Recorder.wait_empty()
     except KeyboardInterrupt:
@@ -1573,12 +1570,12 @@ def main():
 
 def fatal_error(error, filename=None, lineno=None):
     print('Fatal error: %s' % error, file=sys.stderr)
-    if filename and lineno is not None:
+    if filename and lineno:
         print((
             'You can restart the import of "%s" from the point it failed by '
             'specifying --skip=%d on the command line.\n' % (filename, lineno)
         ), file=sys.stderr)
-    os._exit(1)
+    exit(1)
 
 if __name__ == '__main__':
     try:
@@ -1588,6 +1585,5 @@ if __name__ == '__main__':
         stats = Statistics()
         parser = Parser()
         main()
-        sys.exit(0)
     except KeyboardInterrupt:
         pass
