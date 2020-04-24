@@ -1521,13 +1521,13 @@ Performance summary
                 current_total / time_elapsed if time_elapsed != 0 else 0,
                 current_total - latest_total_recorded,
             ))
-            latest_total_recorded = current_total
             logging.info('%d lines parsed, %d lines recorded, %d records/sec (avg), %d records/sec (current)' % (
                 stats.count_lines_parsed.value,
                 current_total,
                 current_total / time_elapsed if time_elapsed != 0 else 0,
                 current_total - latest_total_recorded,
             ))
+            latest_total_recorded = current_total
             time.sleep(1)
 
     def start_monitor(self):
@@ -1571,10 +1571,7 @@ def main():
 def fatal_error(error, filename=None, lineno=None):
     print('Fatal error: %s' % error, file=sys.stderr)
     if filename and lineno:
-        print((
-            'You can restart the import of "%s" from the point it failed by '
-            'specifying --skip=%d on the command line.\n' % (filename, lineno)
-        ), file=sys.stderr)
+        print(f'You can restart the import of "{filename}" from the point it failed by specifying --skip={lineno} on the command line.', file=sys.stderr)
     exit(1)
 
 if __name__ == '__main__':
