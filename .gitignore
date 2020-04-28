@@ -134,3 +134,6 @@ include/
 lib64
 pyvenv.cfg
 tmp
+COUNTER_Robots_list.json
+logfiles_list.txt
+protokoll.txt
