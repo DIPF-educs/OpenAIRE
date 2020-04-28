@@ -710,7 +710,7 @@ class Recorder(object):
 
     def __init__(self):
         self.hits = []
-        self.threshold = config.options.get("recorder_min_hits", 1000)
+        self.threshold = config.options.get("max_payloads", 200)
 
     @classmethod
     def launch(cls, recorder_count):
