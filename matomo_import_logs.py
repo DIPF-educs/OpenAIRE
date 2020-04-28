@@ -802,8 +802,8 @@ class Recorder(object):
         url_prefix = self._get_host_with_protocol(hit.host, main_url) if hasattr(hit, 'host') else main_url
         url = (url_prefix if path.startswith('/') else '') + path[:1024]
 
-        if (hit.referrer.find("?q=") >=0):
-            hit.referrer = hit.referrer.split("?q=")[0]+"/?q=-"
+        if (hit.referrer.find("?") >=0):
+            hit.referrer = hit.referrer.split("?")[0]+" "
 
         args = {
             'rec': '1',
@@ -1097,7 +1097,7 @@ class Parser(object):
         # --w3c-time-taken-milli option isn't set
         if isinstance(format, W3cExtendedFormat):
             format.check_for_iis_option()
-        # dpie check
+        #print "Format name "+format.name
         return format
 
     @staticmethod
