@@ -1519,9 +1519,9 @@ def main():
     stats.print_summary()
 
 def fatal_error(error, filename=None, lineno=None):
-    logging.critical('Fatal error: %s' % error, file=sys.stderr)
+    logging.critical('Fatal error: %s' % error)
     if filename and lineno:
-        logging.critical(f'You can restart the import of "{filename}" from the point it failed by specifying --skip={lineno} on the command line.', file=sys.stderr)
+        logging.critical(f'You can restart the import of "{filename}" from the point it failed by specifying --skip={lineno} on the command line.')
     exit(1)
 
 if __name__ == '__main__':
