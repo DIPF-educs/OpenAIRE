@@ -21,7 +21,7 @@ $conf = new configFile ("../pedocs.conf");
 $prog_mail = $conf->value("prog_mail");
 $opusmail   = $conf->value("opusmail");
 # Parse command line options
-$options=getopt('vl:',array('skip:'));$verbose = 0;
+$options=getopt('vl:',array('skip:','dry-run'));$verbose = 0;$dry_run = 0;
 $logfiles = array();
 if(isset($options['v'])) $verbose = 1;
 if(isset($options['l'])) {
@@ -33,6 +33,7 @@ if(isset($options['l'])) {
 }
 $skip = "";
 if(isset($options['skip']) && isset($options['l'])) $skip = $options['skip'];
+if(isset($options['dry-run'])) $dry_run = 1;
 $data_folder = $config['data_folder'];
 
 if(file_exists($config['data_folder']."/logfiles_list.txt")) {
@@ -104,33 +105,37 @@ foreach($logfiles as $logfile) {
   if($verbose) print("Kopie in Current-Folder");
   copy($logfile, $config['data_folder'].$config['current-log_subfolder']."/".pathinfo($logfile,PATHINFO_BASENAME));
   if($verbose) print(" - Bearbeitung durch matomo_import_log\n".
-                     "matomo_import_logs.py ".($skip?"--skip=$skip ":"").
+                     "matomo_import_logs.py ".($skip?"--skip=$skip ":"").($dry_run?"--dry-run ":"").
               $config['data_folder'].$config['current-log_subfolder']."\n");
   
   passthru($config['data_folder'].'/venv/bin/python '.
-              $config['data_folder'].'/matomo_import_logs.py '.($skip?"--skip=$skip ":"").
+              $config['data_folder'].'/matomo_import_logs.py '.($skip?"--skip=$skip ":"").($dry_run?"--dry-run ":"").
               $config['data_folder'].$config['current-log_subfolder']." > ".$config['data_folder']."/protokoll.txt", $return_var);
   if($return_var) print(" nicht");
   print(" erfolgreich ");
   $new_filename = pathinfo($logfile,PATHINFO_BASENAME);$i = 0;
-  if(!$return_var) {
-    while(file_exists($config['data_folder'].$config['success-log_subfolder']."/".$new_filename.($i?".$i":""))) {
-      $i++;
+  if(!$dry_run) {
+    if(!$return_var) {
+      while(file_exists($config['data_folder'].$config['success-log_subfolder']."/".$new_filename.($i?".$i":""))) {
+        $i++;
+      }
+      if($verbose) print(" - Verschieben in die Success-Folder");
+      rename($config['data_folder'].$config['current-log_subfolder']."/".pathinfo($logfile,PATHINFO_BASENAME),
+            $config['data_folder'].$config['success-log_subfolder']."/".$new_filename.($i?".$i":""));
+      if($verbose) print(" - Anhängen an die Logfile-List");
+      fputs($logfile_list_handle,$logfile."\n");
     }
-    if($verbose) print(" - Verschieben in die Success-Folder");
-    rename($config['data_folder'].$config['current-log_subfolder']."/".pathinfo($logfile,PATHINFO_BASENAME),
-           $config['data_folder'].$config['success-log_subfolder']."/".$new_filename.($i?".$i":""));
-    if($verbose) print(" - Anhängen an die Logfile-List");
-    fputs($logfile_list_handle,$logfile."\n");
-  }
-  else {
-    while(file_exists($config['data_folder'].$config['error-log_subfolder']."/".$new_filename.($i?".$i":""))) {
-      $i++;
+    else {
+      while(file_exists($config['data_folder'].$config['error-log_subfolder']."/".$new_filename.($i?".$i":""))) {
+        $i++;
+      }
+      if($verbose) print(" - Verschieben in die error-Folder");
+      rename($config['data_folder'].$config['current-log_subfolder']."/".pathinfo($logfile,PATHINFO_BASENAME),
+            $config['data_folder'].$config['error-log_subfolder']."/".$new_filename.($i?".$i":""));
     }
-    if($verbose) print(" - Verschieben in die error-Folder");
-    rename($config['data_folder'].$config['current-log_subfolder']."/".pathinfo($logfile,PATHINFO_BASENAME),
-           $config['data_folder'].$config['error-log_subfolder']."/".$new_filename.($i?".$i":""));
   }
+  else unlink($config['data_folder'].$config['current-log_subfolder']."/".pathinfo($logfile,PATHINFO_BASENAME));
+  
   $OpenAire_logmail = new mime_mail;
   $OpenAire_logmail->from = $opusmail;
   $OpenAire_logmail->to = $prog_mail;
