@@ -12,7 +12,7 @@ Matomo_Parameters:
   # Matomo authenticastion token
   token_auth: "32846584f571be9b57488bf4088f30ea"
   # matomo parameters (default values)
-  delay_after_failure: 10
+  delay_after_failure: 1
   default_max_attempts: 3
   default_socket_timeout: 300
   # IP Anonymization
