@@ -38,6 +38,7 @@ import textwrap
 import yaml
 from argparse import ArgumentParser
 from types import MethodType
+from time import sleep
 
 try:
     import json
@@ -437,8 +438,9 @@ class Configuration(object):
                 #extract matomo parameters
                 self.options = opts['Matomo_Parameters']
             except yaml.YAMLError as exc:
-                print(exc)
-                fatal_error("Failed to parse config file. Please correct errors")
+                logging.info(exc)
+                logging.critical("Failed to parse config file. Please correct errors")
+                exit(1)
 
     def _parse_args(self):
         """
@@ -660,7 +662,7 @@ class Matomo(object):
                     raise urllib.error.URLError(error_message)
                 return response
             except (urllib.error.URLError, http.client.HTTPException, ValueError, socket.timeout) as e:
-                logging.warn('Error when connecting to Matomo: %s', e)
+                logging.warning('Error when connecting to Matomo: %s', e)
 
                 code = None
                 if isinstance(e, urllib.error.HTTPError):
@@ -747,11 +749,12 @@ class Recorder(object):
         Wait until all recorders have an empty queue.
         """
         #push none to signal final cleanup
-        logging.debug("Terminate recorders")
+        logging.debug("Waiting for recorders to end")
         for i in cls.recorders:
             cls.queue.put(None)
         #then end
-        cls.queue.join()
+        while not cls.queue.empty() and not state.is_stopped:
+            sleep(0.5)
 
     def _run_bulk(self):
         while True:
@@ -770,7 +773,9 @@ class Recorder(object):
                         self._record_hits()
 
             except Matomo.Error as e:
-                fatal_error(e, self.hits[0].filename, self.hits[0].lineno) # approximate location of error
+                logging.critical(f"Error {e}")
+                logging.debug("Following hits where present:\n" + '\n'.join(f"{h.filename} -> {h.lineno}" for h in self.hits))
+                state.stop(f"Encountered error {e} in file {self.hits[0].filename}")
                 #terminate the loop
                 break
             except Exception as e:
@@ -778,6 +783,7 @@ class Recorder(object):
                 logging.error(f"Failed to process hit: {e}")
                 traceback.print_exc(file=sys.stderr)
                 # TODO: we should log something here, however when this happens, logging.etc will throw
+                state.stop()
                 break
             finally:
                 #always end the loop
@@ -906,7 +912,7 @@ class Recorder(object):
         except Matomo.Error as e:
             # if the server returned 400 code, BulkTracking may not be enabled
             if e.code == 400:
-                fatal_error("Server returned status 400 (Bad Request).\nIs the BulkTracking plugin disabled?", self.hits[0].filename, self.hits[0].lineno)
+                logging.critical("Server returned status 400 (Bad Request).\nIs the BulkTracking plugin disabled?")
 
             raise
         #increment stats
@@ -1134,7 +1140,7 @@ class Parser(object):
             pass
 
         if not format:
-            fatal_error("cannot automatically determine the log format using the first %d lines of the log file. " % limit +
+            logging.critical("cannot automatically determine the log format using the first %d lines of the log file. " % limit +
                         "\nMaybe try specifying the format with the --log-format-name command line argument." )
             return
 
@@ -1167,7 +1173,7 @@ class Parser(object):
             file = sys.stdin
         else:
             if not os.path.exists(filename):
-                logging.warn(f"=====> File {file} does not exist <=====")
+                logging.warning(f"=====> File {file} does not exist <=====")
                 return
             else:
                 if filename.endswith('.bz2'):
@@ -1182,7 +1188,7 @@ class Parser(object):
 
         format = self.detect_format(file)
         if format is None:
-            return fatal_error(
+            return logging.critical(
                 'Cannot guess the logs format. Please give one using '
                 'either the --log-format-name or --log-format-regex option'
             )
@@ -1192,7 +1198,7 @@ class Parser(object):
 
         hits = []
         lineno = -1
-        while True:
+        while not state.is_stopped:
             line = file.readline()
 
             if not line: break
@@ -1479,7 +1485,7 @@ Performance summary
 
     def _monitor(self):
         latest_total_recorded = 0
-        while not self.monitor_stop:
+        while not state.is_stopped:
             current_total = stats.count_lines_recorded.value
             time_elapsed = time.time() - self.time_start
 
@@ -1497,20 +1503,46 @@ Performance summary
         t.daemon = True
         t.start()
 
-    def stop_monitor(self):
-        self.monitor_stop = True
+class State:
+    def __init__(self):
+        self._stopped = True
+        self._reason = None
+        self._lock = threading.Lock()
 
+    @property
+    def is_stopped(self):
+        with self._lock:
+            return self._stopped
+
+    @property
+    def reason(self):
+        with self._lock:
+            return self._reason
+
+    def start(self):
+        with self._lock:
+            self._stopped = False
+
+    def stop(self, reason = None):
+        with self._lock:
+            if self._stopped:
+                return
+            self._stopped = True
+            self._reason = reason
 
 def main():
     """
     Start the importing process.
     """
+    state.start()
     stats.set_time_start()
     stats.start_monitor()
     recorders = Recorder.launch(config.options["recorders"])
 
     try:
         for filename in config.filenames:
+            if state.is_stopped:
+                break
             logging.info(f"Reading {filename} ...")
             parser.parse(filename)
 
@@ -1518,17 +1550,15 @@ def main():
     except KeyboardInterrupt:
         pass
     finally:
+        state.stop()
         stats.set_time_stop()
-        stats.stop_monitor()
         stats.print_summary()
-
-def fatal_error(error, filename=None, lineno=None):
-    logging.critical('Fatal error: %s' % error)
-    if filename and lineno:
-        logging.critical(f'You can restart the import of "{filename}" from the point it failed by specifying --skip={lineno} on the command line.')
+        if state.reason:
+            logging.info(state.reason)
 
 if __name__ == '__main__':
     try:
+        state = State()
         config = Configuration()
         checkRobots = CheckRobots()
         matomo = Matomo()
