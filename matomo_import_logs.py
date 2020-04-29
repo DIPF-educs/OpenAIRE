@@ -571,7 +571,6 @@ class Matomo(object):
 
     def _fake_request(self, request, data):
         logging.info(f"Would send {request.get_method()} - {request.full_url} with {len(request.data)} bytes with {len(json.loads(data).get('requests', []))} requests. Timeout {config.options.get('default_socket_timeout', 'None')}")
-        raise ValueError("MASSIVE ERROR")
         return b"{}"
 
     def _real_request(self, request, data):
@@ -1548,12 +1547,14 @@ def main():
 
         Recorder.wait_empty()
     except KeyboardInterrupt:
+        state.stop("Interrupted")
         pass
     finally:
         state.stop()
         stats.set_time_stop()
         stats.print_summary()
         if state.reason:
+            logging.info("Programm ending with reason:")
             logging.info(state.reason)
 
 if __name__ == '__main__':
