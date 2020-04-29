@@ -568,7 +568,8 @@ class Matomo(object):
             return urllib.request.HTTPRedirectHandler.redirect_request(self, req, fp, code, msg, hdrs, newurl)
 
     def _fake_request(self, request, data):
-        logging.info(f"Would send {request.get_method()} - {request.full_url} with {len(request.data)} bytes with {len(json.loads(data).get('requests', []))} requests.")
+        logging.info(f"Would send {request.get_method()} - {request.full_url} with {len(request.data)} bytes with {len(json.loads(data).get('requests', []))} requests. Timeout {config.options.get('default_socket_timeout', 'None')}")
+        raise ValueError("MASSIVE ERROR")
         return b"{}"
 
     def _real_request(self, request, data):
@@ -659,7 +660,7 @@ class Matomo(object):
                     raise urllib.error.URLError(error_message)
                 return response
             except (urllib.error.URLError, http.client.HTTPException, ValueError, socket.timeout) as e:
-                logging.info('Error when connecting to Matomo: %s', e)
+                logging.warn('Error when connecting to Matomo: %s', e)
 
                 code = None
                 if isinstance(e, urllib.error.HTTPError):
@@ -683,14 +684,12 @@ class Matomo(object):
                     max_attempts = MATOMO_DEFAULT_MAX_ATTEMPTS
 
                 errors += 1
-                if errors == max_attempts:
-                    logging.info("Max number of attempts reached, server is unreachable!")
-
-                    raise Matomo.Error(message, code)
-                else:
-                    logging.info("Retrying request, attempt number %d" % (errors + 1))
-
+                if errors < max_attempts:
+                    logging.error("Retrying request, attempt number %d" % (errors + 1))
                     time.sleep(delay_after_failure)
+                else:
+                    logging.critical("Max number of attempts reached, server is unreachable!")
+                    raise Matomo.Error(message, code)
 
     def call(self, path, args, expected_content=None, headers=None, data=None, on_failure=None):
         return self._call_wrapper(self._call, expected_content, on_failure, path, args, headers,
@@ -771,17 +770,20 @@ class Recorder(object):
                         self._record_hits()
 
             except Matomo.Error as e:
-                fatal_error(e, hit.filename, hit.lineno) # approximate location of error
+                fatal_error(e, self.hits[0].filename, self.hits[0].lineno) # approximate location of error
+                #terminate the loop
+                break
             except Exception as e:
                 import traceback
                 logging.error(f"Failed to process hit: {e}")
                 traceback.print_exc(file=sys.stderr)
                 # TODO: we should log something here, however when this happens, logging.etc will throw
-                return
+                break
             finally:
                 #always end the loop
                 #this includes the break statement in `if hit is None:` case
                 Recorder.queue.task_done()
+        logging.debug(f"Recorder {self.nbr} finished")
 
     def date_to_matomo(self, date):
         date, time = date.isoformat(sep=' ').split()
@@ -1509,22 +1511,21 @@ def main():
 
     try:
         for filename in config.filenames:
-            logging.info("Reading..."+filename)
+            logging.info(f"Reading {filename} ...")
             parser.parse(filename)
 
         Recorder.wait_empty()
     except KeyboardInterrupt:
         pass
-
-    stats.set_time_stop()
-    stats.stop_monitor()
-    stats.print_summary()
+    finally:
+        stats.set_time_stop()
+        stats.stop_monitor()
+        stats.print_summary()
 
 def fatal_error(error, filename=None, lineno=None):
     logging.critical('Fatal error: %s' % error)
     if filename and lineno:
         logging.critical(f'You can restart the import of "{filename}" from the point it failed by specifying --skip={lineno} on the command line.')
-    exit(1)
 
 if __name__ == '__main__':
     try:
