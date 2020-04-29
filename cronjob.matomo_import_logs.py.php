@@ -110,7 +110,7 @@ foreach($logfiles as $logfile) {
   
   passthru($config['data_folder'].'/venv/bin/python '.
               $config['data_folder'].'/matomo_import_logs.py '.($skip?"--skip=$skip ":"").($dry_run?"--dry-run ":"").
-              $config['data_folder'].$config['current-log_subfolder']." > ".$config['data_folder']."/protokoll.txt", $return_var);
+              $config['data_folder'].$config['current-log_subfolder']." &> ".$config['data_folder']."/protokoll.txt", $return_var);
   if($return_var) print(" nicht");
   print(" erfolgreich ");
   $new_filename = pathinfo($logfile,PATHINFO_BASENAME);$i = 0;
