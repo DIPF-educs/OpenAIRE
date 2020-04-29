@@ -567,11 +567,11 @@ class Matomo(object):
             logging.debug("Request redirected (code: %s) to '%s'" % (code, newurl))
             return urllib.request.HTTPRedirectHandler.redirect_request(self, req, fp, code, msg, hdrs, newurl)
 
-    def _fake_request(self, request):
-        logging.info(f"Would send {request.get_method()} - {request.full_url} with {len(request.data)} bytes.")
+    def _fake_request(self, request, data):
+        logging.info(f"Would send {request.get_method()} - {request.full_url} with {len(request.data)} bytes with {len(json.loads(data).get('requests', []))} requests.")
         return b"{}"
 
-    def _real_request(self, request):
+    def _real_request(self, request, data):
         # Use non-default SSL context if invalid certificates shall be
         # accepted.
         https_handler_args = {}
@@ -604,7 +604,7 @@ class Matomo(object):
 
         request = urllib.request.Request(url + path, data, headers)
 
-        return self._send_request(request)
+        return self._send_request(request, data)
 
     def _call_api(self, method, **kwargs):
         """
@@ -710,7 +710,9 @@ class Recorder(object):
 
     def __init__(self):
         self.hits = []
-        self.threshold = config.options.get("max_payloads", 200)
+        logging.debug(f"Max-Payload Size: {config.max_payload}")
+        self.threshold = config.max_payload or 200
+
 
     @classmethod
     def launch(cls, recorder_count):
